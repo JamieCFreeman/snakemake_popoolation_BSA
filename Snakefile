@@ -26,6 +26,19 @@ rule q20_filter_bam:
         shell:  
                 "samtools view -q 20 -b -S {input} > {output}"
 
+rule sync_file:
+        input:
+                "q20_filter/{sample}_q20.bam"
+        output:
+                mpileup: "pileup/BSAF7.mpileup"
+                sync_file: "sync/BSAF7.sync" 
+        shell:
+                """
+                samtools mpileup -B {input} > {output.mpileup};
+                java -ea -Xmx7g -jar /workdir/jcf236/popoolation2_1201/mpileup2sync.jar \
+                --input {output.mpileup} --output {output.sync_file} --fastq-type anger --min-qual 20 --threads 24
+                """        
+                
 rule merge:
         input:  
                 expand("q20_filter/{sample}_q20.bam", sample=samples_table["samples"])
