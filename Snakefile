@@ -15,38 +15,97 @@ wildcard_constraints:
         sample="|".join(samples_table['samples'])
 
 rule all:
-        input:  
-                "merge.txt"
+        input:
+                "AFD/BSAF7_pwc",
+                "stats/BSAF7_w500.fst",
+                expand("stats/BSAF7_{min}.gwas", min = config["CMH_min"])
 
 rule q20_filter_bam:
-        input:  
+        input:
                 "dedup_bam/{sample}_dedup.bam"
-        output: 
+        output:
                 "q20_filter/{sample}_q20.bam"
-        shell:  
+        shell:
                 "samtools view -q 20 -b -S {input} > {output}"
 
-rule sync_file:
+rule mpileup:
         input:
-                "q20_filter/{sample}_q20.bam"
+                expand("q20_filter/{sample}_q20.bam", sample=samples_table["samples"])
         output:
-                mpileup: "pileup/BSAF7.mpileup"
-                sync_file: "sync/BSAF7.sync" 
+                "pileup/BSAF7.mpileup"
         shell:
                 """
-                samtools mpileup -B {input} > {output.mpileup};
+                samtools mpileup -B {input} > {output}
+                """
+rule sync_file:
+        input:
+                "pileup/BSAF7.mpileup"
+        output:
+                "sync/BSAF7.sync"
+        shell:
+                """
                 java -ea -Xmx7g -jar /workdir/jcf236/popoolation2_1201/mpileup2sync.jar \
-                --input {output.mpileup} --output {output.sync_file} --fastq-type anger --min-qual 20 --threads 24
-                """        
-                
+                  --input {input} --output {output}.sync --fastq-type sanger --min-qual 20 --threads 24
+                """
+
+rule AF_diff:
+        input:
+                "sync/BSAF7.sync"
+        output:
+                "AFD/BSAF7_pwc"
+        shell:
+                """
+                out_pref=`echo {input} | sed 's/.sync//' | sed 's ^.*/  '`;
+                perl /workdir/jcf236/popoolation2_1201/snp-frequency-diff.pl --input {input} --output-prefix ./AFD/${{out_pref}} \
+                        --min-count 6 --min-coverage 20 --max-coverage 200
+                """
+
+rule Fst:
+        input:
+                "sync/BSAF7.sync"
+        output:
+                "stats/BSAF7_w500.fst"
+        shell:
+                """
+                perl /workdir/jcf236/popoolation2_1201/fst-sliding.pl --input {input} \
+                --output {output} --min-count 6 --min-coverage 10 --max-coverage 200 \
+                --min-covered-fraction 1 --window-size 5000 --step-size 5000 --pool-size 100 \
+                """
+
+rule CMH_test:
+        input:
+                "sync/BSAF7.sync"
+        output:
+                expand("stats/BSAF7_{min}.cmh", min = config["CMH_min"])
+        params:
+                min_cov    = config["CMH_min"],
+                max_cov    = 100,
+                min_count  = 6
+        shell:
+                """
+                perl /workdir/jcf236/popoolation2_1201/cmh-test.pl --input {input} --output {output} --min-count {params.min_count}  \
+                --min-coverage {params.min_cov} --max-coverage {params.max_cov} --population 1-2,4-5,7-8
+                """
+
+rule CMH_gwas:
+        input:
+                "stats/BSAF7_{CMH_min}.cmh"
+        output:
+                "stats/BSAF7_{CMH_min}.gwas"
+        params:
+                min_pvalue  = 1.0e-20
+        shell:
+                "perl /workdir/jcf236/popoolation2_1201/export/cmh2gwas.pl --input {input} --output {output} --min-pvalue {params.min_pvalue}"
+
 rule merge:
-        input:  
+        input:
                 expand("q20_filter/{sample}_q20.bam", sample=samples_table["samples"])
-        output: 
+        output:
                 "merge.txt"
-        shell:  
+        shell:
                 "echo hello > {output}"
 
 rule clean:
-        shell:  
+        shell:
                 "rm merge.txt"
+                                        
